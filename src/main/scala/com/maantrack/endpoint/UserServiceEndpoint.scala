@@ -3,10 +3,11 @@ package com.maantrack.endpoint
 import cats.effect._
 import cats.implicits._
 import com.maantrack.domain.Error
+import com.maantrack.domain.Error.Duplicate
 import com.maantrack.domain.user.{ User, UserCredential, UserRequest, UserResponse, UserService }
-import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import io.chrisdavenport.log4cats.Logger
 import org.http4s.dsl.Http4sDsl
-import org.http4s.{ EntityDecoder, HttpRoutes, Response }
+import org.http4s.{ EntityDecoder, HttpRoutes, InvalidMessageBodyFailure, Response }
 import tsec.authentication.{ TSecAuthService, TSecBearerToken, _ }
 import tsec.common.Verified
 import tsec.passwordhashers.{ PasswordHash, PasswordHasher }
@@ -15,7 +16,7 @@ import io.circe.syntax._
 import org.http4s.circe._
 import io.scalaland.chimney.dsl._
 
-class UserServiceEndpoint[F[_]: Sync, A](
+class UserServiceEndpoint[F[_]: Sync: Logger, A](
   bearerTokenAuth: BearerTokenAuthenticator[F, Long, User],
   userService: UserService[F],
   hasher: PasswordHasher[F, A]
@@ -38,12 +39,9 @@ class UserServiceEndpoint[F[_]: Sync, A](
       } yield result
 
       res.recoverWith {
-        case e =>
-          for {
-            logger <- Slf4jLogger.create[F]
-            _      <- logger.error(e)(e.getMessage)
-            b      <- BadRequest()
-          } yield b
+        case e: Duplicate                 => Logger[F].error(e)(e.getMessage) *> Conflict(e.msg.asJson)
+        case e: InvalidMessageBodyFailure => Logger[F].error(e)(e.getMessage) *> BadRequest(e.getMessage.asJson)
+        case e                            => Logger[F].error(e)(e.getMessage) *> InternalServerError(e.getMessage.asJson)
       }
   }
 
@@ -84,12 +82,7 @@ class UserServiceEndpoint[F[_]: Sync, A](
       } yield bearerTokenAuth.embed(resp, tok)
 
       res.recoverWith {
-        case e =>
-          for {
-            logger <- Slf4jLogger.create[F]
-            _      <- logger.error(e)(e.getMessage)
-            b      <- BadRequest()
-          } yield b
+        case e => Logger[F].error(e)(e.getMessage) *> BadRequest(e.getMessage.asJson)
       }
   }
 
@@ -99,7 +92,7 @@ class UserServiceEndpoint[F[_]: Sync, A](
 }
 
 object UserServiceEndpoint {
-  def apply[F[_]: Async, A](
+  def apply[F[_]: Async: Logger, A](
     bearerTokenAuth: BearerTokenAuthenticator[F, Long, User],
     userService: UserService[F],
     hasher: PasswordHasher[F, A]

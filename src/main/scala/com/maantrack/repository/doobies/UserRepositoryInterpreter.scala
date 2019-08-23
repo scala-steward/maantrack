@@ -6,13 +6,14 @@ import cats._
 import cats.data.OptionT
 import cats.effect.Async
 import cats.implicits._
+import com.maantrack.domain.Error.{ Duplicate, NotFound }
 import com.maantrack.domain.user.{ User, UserRepository, UserRequest }
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
+import doobie.postgres.sqlstate
 import doobie.util.Meta
 import doobie.util.log.LogHandler
 import doobie.util.update.Update0
-import io.scalaland.chimney.dsl._
 
 private object UserSql {
   private val now = Instant.now()
@@ -59,21 +60,17 @@ class UserRepositoryInterpreter[F[_]: Async](xa: HikariTransactor[F]) extends Us
 
   import UserSql._
 
-  private val now = Instant.now()
-
   override def addUser(userRequest: UserRequest): F[User] =
-    insert(userRequest)
-      .withUniqueGeneratedKeys[Long]("user_id")
-      .map(
-        id =>
-          userRequest
-            .into[User]
-            .withFieldConst(_.userId, id)
-            .withFieldConst(_.modifiedDate, now)
-            .withFieldConst(_.createdDate, now)
-            .transform
-      )
-      .transact(xa)
+    for {
+      id <- insert(userRequest)
+             .withUniqueGeneratedKeys[Long]("user_id")
+             .attemptSomeSqlState {
+               case sqlstate.class23.UNIQUE_VIOLATION => Duplicate("Username already exist"): Throwable
+             }
+             .transact(xa)
+             .flatMap(_.raiseOrPure[F])
+      user <- getUserById(id).toRight(NotFound(): Throwable).value.flatMap(_.raiseOrPure[F])
+    } yield user
 
   override def deleteUserById(id: Long): OptionT[F, User] =
     getUserById(id)

@@ -5,8 +5,6 @@ import cats.effect._
 import cats.implicits._
 import com.maantrack.config.{ DatabaseConfig, ServerConfig }
 import doobie.util.ExecutionContexts
-import io.chrisdavenport.log4cats.SelfAwareStructuredLogger
-import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.http4s.HttpApp
 import org.http4s.server.blaze._
 import org.http4s.server.{ Router, Server => H4Server }
@@ -16,10 +14,6 @@ import tsec.passwordhashers.jca.BCrypt
 import pureconfig.generic.auto._
 
 object Main extends IOApp {
-
-  implicit def unsafeLogger: SelfAwareStructuredLogger[IO] =
-    Slf4jLogger.getLogger[IO]
-
   override def run(args: List[String]): IO[ExitCode] =
     HttpServer.stream[IO, BCrypt].use(_ => IO.never).as(ExitCode.Success)
 }
